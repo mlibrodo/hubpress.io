@@ -1,2 +1,33 @@
 = Developing a RabbitMQ client in scala and Akka
 
+
+I have worked with RabbitMQ for many projects. I have always used the link:https://www.rabbitmq.com/java-client.html[rabbitmq client] as a means to connect to the rabbitmq server. One of the things that 
+
+
+[source, scala]
+----
+scala> import com.rabbitmq.client._
+import com.rabbitmq.client._
+
+scala> val cf = new ConnectionFactory(); cf.setUri("amqp://guest:guest@localhost:5672")
+cf: com.rabbitmq.client.ConnectionFactory = com.rabbitmq.client.ConnectionFactory@1683141c
+
+scala> val conn = cf.newConnection
+conn: com.rabbitmq.client.Connection = amqp://guest@127.0.0.1:5672/
+
+scala> conn.addShutdownListener( new ShutdownListener() { def shutdownCompleted(cause:ShutdownSignalException) { println(s"reason ${cause.getReason} hardError:${cause.isHardError} isInitiatedByApp ${cause.isInitiatedByApplication}")}})
+
+scala> conn.close  // App initiated close connection
+
+scala> reason #method<connection.close>(reply-code=200, reply-text=OK, class-id=0, method-id=0) hardError:true isInitiatedByApp true
+
+
+scala> val conn = cf.newConnection
+conn: com.rabbitmq.client.Connection = amqp://guest@127.0.0.1:5672/
+
+scala> conn.addShutdownListener( new ShutdownListener() { def shutdownCompleted(cause:ShutdownSignalException) { println(s"reason ${cause.getReason} hardError:${cause.isHardError} isInitiatedByApp ${cause.isInitiatedByApplication}")}})
+
+scala> // rmq server shutdown
+
+scala> reason null hardError:true isInitiatedByApp false
+----
