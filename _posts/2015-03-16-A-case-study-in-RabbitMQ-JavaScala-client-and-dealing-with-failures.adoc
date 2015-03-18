@@ -43,9 +43,9 @@ connFactory.setAutomaticRecoveryEnable(true)
 
 ----
 Before link:https://www.rabbitmq.com/releases/rabbitmq-java-client/v3.3.0/[3.3.0], it was 
-up to the application to deal with both types of failures. At any point during the runtime of the application, a server-initiated or client-initiated failure occurs then we had to create a new connection, channel and reestablish the exchanges, queues, bindings. So a minor blip in the network or misdeclared queue would cause our publishers/consumers to fail since the connection/channel was closed. This was actually posed as a question by a friend in link://http://stackoverflow.com/questions/19695897/how-do-you-handle-recovering-from-a-faulty-connection-using-rabbitmq-java-client[stackoverflow].
+up to the application to deal with both types of failures. At any point during the runtime of the application, a server-initiated or client-initiated failure occurs then we had to create a new connection, channel and reestablish the exchanges, queues, bindings. So a minor blip in the network or misdeclared queue would cause our publishers/consumers to fail since the connection/channel was closed. This was actually posed as a question by a friend in link:http://stackoverflow.com/questions/19695897/how-do-you-handle-recovering-from-a-faulty-connection-using-rabbitmq-java-client[stackoverflow].
 
-So now that we have the autorecovery facilities built into the RabbitMQ Java client, how does it actually behave when faced with server-initiated/client-intiated failures. Basically, if there was an error in the application logic using the RabbitMQ client, prior to 3.3, we were not able to reuse the channel. After 3.3, would the Java client recover and can we still use the channel. I don't really feel that the section on link://https://www.rabbitmq.com/api-guide.html[Automatic Recovery] really explains this behavior in detail. So I came up with an experiment and recorded the results in the chart below. Scenario 1 looks at the behavior when autorecovery is set to false and there was a client-initiated error (i.e. redeclaring a queue, queue1, with different parameters) Scenario 2 looks at the behavior when automatic recover is set to true and there is a server-initiated failure (i.e. we shutdown then restart the RabbitMQ broker server). Scenario 3 and 4 are the same tests with autorecovery set to false. Channel Recovered column means that the channel was able to survive the failure and use it as if nothing happened. Connection Recoverd means that the connection survived the failure and use it as if nothing happened. Chan Shutdown Handler Called column specifies whether the channel shutdownListener was called. Conn Shutdown Handler Called column specifies that the connection shutdownListener was called. Chan hardError and Conn HardError specifies whether the error was a hard error. I've included the source code for each scenario below.
+So now that we have the autorecovery facilities built into the RabbitMQ Java client, how does it actually behave when faced with server-initiated/client-intiated failures. Basically, if there was an error in the application logic using the RabbitMQ client, prior to 3.3, we were not able to reuse the channel. After 3.3, would the Java client recover and can we still use the channel. I don't really feel that the section on link:https://www.rabbitmq.com/api-guide.html[Automatic Recovery] really explains this behavior in detail. So I came up with an experiment and recorded the results in the chart below. Scenario 1 looks at the behavior when autorecovery is set to false and there was a client-initiated error (i.e. redeclaring a queue, queue1, with different parameters) Scenario 2 looks at the behavior when automatic recover is set to true and there is a server-initiated failure (i.e. we shutdown then restart the RabbitMQ broker server). Scenario 3 and 4 are the same tests with autorecovery set to false. Channel Recovered column means that the channel was able to survive the failure and use it as if nothing happened. Connection Recoverd means that the connection survived the failure and use it as if nothing happened. Chan Shutdown Handler Called column specifies whether the channel shutdownListener was called. Conn Shutdown Handler Called column specifies that the connection shutdownListener was called. Chan hardError and Conn HardError specifies whether the error was a hard error. I've included the source code for each scenario below.
 
 |===
 |Scenario |AutoRecovery|Client-Initiated/Server-Initiated |Channel Recovered | Connection Recovered | Chan Shutdown Handler Called | Conn Shutdown Handler Called | Chan HardError |  Conn HardError 
@@ -91,38 +91,162 @@ So now that we have the autorecovery facilities built into the RabbitMQ Java cli
 |True
 
 
-
-
 |===
 
 
-As you can see, it seems that when autorecovery is set and its server-initiated failure (i.e. lost connection to RabbitMQ server) then channel/connection is still useable once the failure has been addressed (connection was established to the RabbitMQ server). Regardless of whether autorecovery is set or not, if there is a client initiated failure, we are not able to reuse the same channel
+As you can see, it seems that when autorecovery is set and its server-initiated failure (i.e. lost connection to RabbitMQ server) then channel/connection is still useable once the failure has been addressed (connection was re-established to the RabbitMQ server). Regardless of whether autorecovery is set or not, if there is a client initiated failure, we are not able to reuse the same channel. So it seems the developer using the RabbitMQ client no longer needs to worry about flaky networks to the RabbitMQ server (of course still considering aspects of his environment and proper client configuration i.e heartbeat, network recovery interval). He can focus primarily on application logic.
 
-
+=== Source 1
 [source, scala]
 ----
-scala> import com.rabbitmq.client._
-import com.rabbitmq.client._
+  import com.rabbitmq.client._
 
-scala> val cf = new ConnectionFactory(); cf.setUri("amqp://guest:guest@localhost:5672")
-cf: com.rabbitmq.client.ConnectionFactory = com.rabbitmq.client.ConnectionFactory@1683141c
+  val cf = new ConnectionFactory
+  cf.setUri("amqp://guest:guest@localhost:5672")
+  cf.setAutomaticRecoveryEnabled(true)  #<1>
+  val conn = cf.newConnection
+  
+  conn.addShutdownListener(new ShutdownListener() {
+    def shutdownCompleted(cause: ShutdownSignalException) {
+      println(s"CONNECTION Death reason ${cause.getReason} hardError:${cause.isHardError} isInitiatedByApp ${cause.isInitiatedByApplication}")
+    }
+  })
 
-scala> val conn = cf.newConnection
-conn: com.rabbitmq.client.Connection = amqp://guest@127.0.0.1:5672/
+  val ch1 = conn.createChannel
+  
+  ch1.addShutdownListener(new ShutdownListener() {
+    def shutdownCompleted(cause: ShutdownSignalException) {
+      println(s"CHANNEL DEATH ${cause.getReason} hardError:${cause.isHardError} isInitiatedByApp ${cause.isInitiatedByApplication}")
+    }
+  })
+  
+  ch1.queueDeclare("queue1", false, true, false, null) // create a queue1 with durable,  auto delete = false, and exclusive = true
+  ch1.isOpen // true
+  
+  ch1.queueDeclare("queue1", false, true, true, null)  #<2>
+  ch1.isOpen //false #<3>
+  conn.isOpen //true
+  ch1.queueDeclare("queue2", false, false, false, null)
+  // error channel is closed i.e. we can’t use ch1
+  val ch2 = conn.createChannel  #<4>
+  ch2.queueDeclare("queue2", false, true, false, null) //SUCCESS  ----
 
-scala> conn.addShutdownListener( new ShutdownListener() { def shutdownCompleted(cause:ShutdownSignalException) { println(s"reason ${cause.getReason} hardError:${cause.isHardError} isInitiatedByApp ${cause.isInitiatedByApplication}")}})
-
-scala> conn.close  // App initiated close connection
-
-scala> reason #method<connection.close>(reply-code=200, reply-text=OK, class-id=0, method-id=0) hardError:true isInitiatedByApp true
-
-
-scala> val conn = cf.newConnection
-conn: com.rabbitmq.client.Connection = amqp://guest@127.0.0.1:5672/
-
-scala> conn.addShutdownListener( new ShutdownListener() { def shutdownCompleted(cause:ShutdownSignalException) { println(s"reason ${cause.getReason} hardError:${cause.isHardError} isInitiatedByApp ${cause.isInitiatedByApplication}")}})
-
-scala> // rmq server shutdown
-
-scala> reason null hardError:true isInitiatedByApp false
 ----
+<1> Auto recovery Enabled
+<2> Force a client-initiated error by redeclaring a queue
+<3> Channel is closed but Connection is open
+<4> Still able to create a new channel using same connection
+
+=== Source 2
+[source, scala]
+----
+  import com.rabbitmq.client._
+
+  val cf = new ConnectionFactory
+  cf.setUri("amqp://guest:guest@localhost:5672")
+  cf.setAutomaticRecoveryEnabled(true) #<1>
+  
+  val conn = cf.newConnection
+  
+  conn.addShutdownListener(new ShutdownListener() {
+    def shutdownCompleted(cause: ShutdownSignalException) {
+      println(s"CONNECTION Death reason ${cause.getReason} hardError:${cause.isHardError} isInitiatedByApp ${cause.isInitiatedByApplication}")
+    }
+  })
+  val ch1 = conn.createChannel
+  
+  ch1.addShutdownListener(new ShutdownListener() {
+    def shutdownCompleted(cause: ShutdownSignalException) {
+      println(s"CHANNEL DEATH ${cause.getReason} hardError:${cause.isHardError} isInitiatedByApp ${cause.isInitiatedByApplication}")
+    }
+  })
+
+  //// RMQ SERVER IS STOPPED #<2>
+  // CHANNEL DEATH MESSAGE is printed
+  conn.isOpen //false       #<3>
+  ch1.isOpen //false
+  //// RMQ SERVER is RESTARTED #<4>
+  //// CONNECTION DEATH MESSAGE is printed
+  conn.isOpen //true #<5>
+  ch1.isOpen
+  //true
+  // queue1 is recreated
+  val ch2 = conn.createChannel
+----
+<1> Auto recovery Enabled
+<2> Stop the RabbitMQ Server to simulate a network failure
+<3> Channel and Connection are closed
+<4> RabbitMQ Server is re-started
+<5> Connection and same channel are open
+
+=== Source 3
+[source, scala]
+----
+  import com.rabbitmq.client._
+
+  val cf = new ConnectionFactory
+  cf.setUri("amqp://guest:guest@localhost:5672")
+  cf.setAutomaticRecoveryEnabled(false)  #<1>
+  
+  val conn = cf.newConnection
+  
+  conn.addShutdownListener(new ShutdownListener() {
+    def shutdownCompleted(cause: ShutdownSignalException) {
+      println(s"CONNECTION Death reason ${cause.getReason} hardError:${cause.isHardError} isInitiatedByApp ${cause.isInitiatedByApplication}")
+    }
+  })
+  val ch1 = conn.createChannel
+  
+  ch1.addShutdownListener(new ShutdownListener() {
+    def shutdownCompleted(cause: ShutdownSignalException) {
+      println(s"CHANNEL DEATH ${cause.getReason} hardError:${cause.isHardError} isInitiatedByApp ${cause.isInitiatedByApplication}")
+    }
+  })
+  
+  ch1.queueDeclare("queue1", false, true, false, null) // create a queue1 with durable,  auto delete = false, and exclusive = true
+  ch1.isOpen // true
+  ch1.queueDeclare("queue1", false, true, true, null) // create a queue1 with durable= false, and auto delete, exclusive true  .. Error
+  ch1.isOpen //false
+  conn.isOpen //true
+  ch1.queueDeclare("queue2", false, false, false, null)
+  // error channel is closed i.e. we can’t use ch1
+  val ch2 = conn.createChannel // can still use connection
+  ch2.queueDeclare("queue2", false, true, false, null) // SUCCESS 
+----
+<1> Auto recovery disabled
+
+
+=== Source 4
+[source, scala]
+----
+  import com.rabbitmq.client._
+
+  val cf = new ConnectionFactory
+  cf.setUri("amqp://guest:guest@localhost:5672")
+  cf.setAutomaticRecoveryEnabled(false)
+  val conn = cf.newConnection
+  
+  conn.addShutdownListener(new ShutdownListener() {
+    def shutdownCompleted(cause: ShutdownSignalException) {
+      println(s"CONNECTION Death reason ${cause.getReason} hardError:${cause.isHardError} isInitiatedByApp ${cause.isInitiatedByApplication}")
+    }
+  })
+  
+  val ch1 = conn.createChannel
+  
+  ch1.addShutdownListener(new ShutdownListener() {
+    def shutdownCompleted(cause: ShutdownSignalException) {
+      println(s"CHANNEL DEATH ${cause.getReason} hardError:${cause.isHardError} isInitiatedByApp ${cause.isInitiatedByApplication}")
+    }
+  })
+  ch1.queueDeclare("queue1", false, true, false, new java.util.HashMap()) // this queue even though its exclusive will 
+  //// RMQ SERVER IS STOPPED 
+  // CHANNEL DEATH MESSAGE is printed
+  conn.isOpen //false
+  ch1.isOpen //false
+  //// RMQ SERVER is RESTARTED
+  //// CONNECTION DEATH MESSAGE is printed
+  conn.isOpen //false
+  ch1.isOpen //false
+----
+<1> Auto recovery disabled
