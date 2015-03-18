@@ -35,15 +35,25 @@ With that we can now try to examine the scenarios when the connection/channel fa
     
  
 In versions link:https://www.rabbitmq.com/releases/rabbitmq-java-client/v3.2.4/[3.2.4] and under of the RabbitMQ client, there was no facility for the client to automatically recover from any kind of failures out of the box. However in link:https://www.rabbitmq.com/releases/rabbitmq-java-client/v3.3.0/[3.3.0] and beyond, the RabbitMQ client introduced the concept of autorecovery of connections/channels during some failure scenarios. This autorecovery facility is available through the ConnectionFactory via the link:https://www.rabbitmq.com/releases/rabbitmq-java-client/v3.3.0/rabbitmq-java-client-javadoc-3.3.0/com/rabbitmq/client/ConnectionFactory.html#setAutomaticRecoveryEnabled(boolean)[setAutomaticRecoveryEnabled] method. Before link:https://www.rabbitmq.com/releases/rabbitmq-java-client/v3.3.0/[3.3.0], it was 
-up to the application to deal with both types of failures. At any point during the runtime of the application, a server-initiated or client-initiated failure occurs then we had to create a new connection, channel and reestablish the exchanges, queues, bindings. So a minor blip in the network would cause our publishers/consumers to fail since the connection/channel was closed
+up to the application to deal with both types of failures. At any point during the runtime of the application, a server-initiated or client-initiated failure occurs then we had to create a new connection, channel and reestablish the exchanges, queues, bindings. So a minor blip in the network would cause our publishers/consumers to fail since the connection/channel was closed. This was actually posed as a question by a friend in link://http://stackoverflow.com/questions/19695897/how-do-you-handle-recovering-from-a-faulty-connection-using-rabbitmq-java-client[stackoverflow].
 
-For example in the consumer, you would have code like this
+So now that we have the autorecovery facilities built into the RabbitMQ Java client, how does it actually behave when faced with server-initiated/client-intiated failures. Basically, if there was an error in the application logic using the RabbitMQ client, prior to 3.3, we were not able to reuse the channel. After 3.3, would the Java client recover and can we still use the channel. I don't really feel that the section on link://https://www.rabbitmq.com/api-guide.html[Automatic Recovery] really explains this behavior in detail. So I came up with a simple chart on how this behavior.
 
-new DefaultConsumer() {
+|===
+|Code Sample |AutoRecovery|Client-Initiated/Server-Initiated |Channel Recovered | Connection Recovered | Chan Shutdown Handler Called | Conn Shutdown Handler Called | Chan hardError | Chan InitiatedByApp | Conn HardError | Conn InitiatedByApp
 
-def handleDelivery()
+|Firefox
+|Web Browser
+|Mozilla Firefox is an open-source web browser.
+It's designed for standards compliance,
+performance, portability.
 
-}
+|Ruby
+|Programming Language
+|A programmer's best friend.
+
+...
+|===
 
 
 
