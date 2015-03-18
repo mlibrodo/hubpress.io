@@ -1,5 +1,5 @@
 = A case study in RabbitMQ Java/Scala client and dealing with failures
-
+:hp-tags: rabbitmq, scala
 
 I have worked with RabbitMQ for many projects. I have always used the link:https://www.rabbitmq.com/java-client.html[RabbitMQ client] as a means to interact with the RabbitMQ server (as a producer and consumer). One of the things that I always found challenging was how the client dealt with failures. First before I continute, I wanted to give some background on how the RabbitMQ client establishes a "connection" to the server. RabbitMQ client/server talk via a wire protocol called link:https://www.rabbitmq.com/tutorials/amqp-concepts.html[AMQP]. What is different about how RabbitMQ client/server "connection" versus a JDBC client connection to a database, is that the RabbitMQ "connection" has one level of indirection to the TCP connection that the client makes with the server. This level of indirection is represented by the channel. Per the AMQP standard, the channel allows clients to multiplex one TCP connection. Therefore it allows a client to create multiple "connections" using the same TCP connection.
 
