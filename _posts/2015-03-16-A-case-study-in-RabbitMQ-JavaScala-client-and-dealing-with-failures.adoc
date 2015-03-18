@@ -1,7 +1,50 @@
-= Developing a RabbitMQ client in scala and Akka
+= A case study in RabbitMQ Java/Scala client and dealing with failures
 
 
-I have worked with RabbitMQ for many projects. I have always used the link:https://www.rabbitmq.com/java-client.html[rabbitmq client] as a means to connect to the rabbitmq server. One of the things that 
+I have worked with RabbitMQ for many projects. I have always used the link:https://www.rabbitmq.com/java-client.html[RabbitMQ client] as a means to interact with the RabbitMQ server (as a producer and consumer). One of the things that I always found challenging was how the client dealt with failures. First before I continute, I wanted to give some background on how the RabbitMQ client establishes a "connection" to the server. RabbitMQ client/server talk via a wire protocol called link:https://www.rabbitmq.com/tutorials/amqp-concepts.html[AMQP]. What is different about how RabbitMQ client/server "connection" versus a JDBC client connection to a database, is that the RabbitMQ "connection" has one level of indirection to the TCP connection that the client makes with the server. This level of indirection is represented by the channel. Per the AMQP standard, the channel allows clients to multiplex one TCP connection. Therefore it allows a client to create multiple "connections" using the same TCP connection.
+
+The typical way publisher/consumer client is through something like this:
+
+[source, scala]
+----
+val cf = new ConnectionFactory()
+cf.setUri("amqp://guest:guest@localhost:5672")
+val conn = conn.newConnection
+val channel = conn.createChannel
+// declare exchanges, queues, bindings if needed 
+//...
+//if producer
+channel.publish(exchange, routingkey, props, message)
+// if consumer
+val consumer = new QueueingConsumer
+channel.basicConsume(queueName, consumer)
+
+----
+
+Now since we don't want to create a TCP connection everytime a message is published or consumed, the connection and channel are usually created during an application startup and remains open until the application shuts down. So these TCP connections and channels are long-lived.
+
+With that we can now try to examine the scenarios when the connection/channel fail between the application using the RabbitMQ client and RabbitMQ server. I believe there are two classes of failure that needs to be considered
+
+* server-initiated failures
+	
+    These types of failures are generated as a result of the client not being able to reach the server. Examples of these include network issues, RabbitMQ server is down or RabbitMQ Server forces a connection/channel close
+   
+* client-initiated failures
+
+	Client initiated failures are ones that are a result of actions of the client itself. For example, declaring the same queue twice but with different features (exclusive, durable, etc)
+    
+ 
+In versions link:https://www.rabbitmq.com/releases/rabbitmq-java-client/v3.2.4/[3.2.4] and under of the RabbitMQ client, there was no facility for the client to automatically recover from any kind of failures out of the box. However in link:https://www.rabbitmq.com/releases/rabbitmq-java-client/v3.3.0/[3.3.0] and beyond, the RabbitMQ client introduced the concept of autorecovery of connections/channels during some failure scenarios. This autorecovery facility is available through the ConnectionFactory via the link:https://www.rabbitmq.com/releases/rabbitmq-java-client/v3.3.0/rabbitmq-java-client-javadoc-3.3.0/com/rabbitmq/client/ConnectionFactory.html#setAutomaticRecoveryEnabled(boolean)[setAutomaticRecoveryEnabled] method. Before link:https://www.rabbitmq.com/releases/rabbitmq-java-client/v3.3.0/[3.3.0], it was 
+up to the application to deal with both types of failures. At any point during the runtime of the application, a server-initiated or client-initiated failure occurs then we had to create a new connection, channel and reestablish the exchanges, queues, bindings. So a minor blip in the network would cause our publishers/consumers to fail since the connection/channel was closed
+
+For example in the consumer, you would have code like this
+
+new DefaultConsumer() {
+
+def handleDelivery()
+
+}
+
 
 
 [source, scala]
